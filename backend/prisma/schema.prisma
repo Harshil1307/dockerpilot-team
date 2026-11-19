@@ -1,0 +1,155 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id                  String               @id @default(uuid()) @db.Uuid
+  name                String               @db.VarChar(100)
+  description         String?              @db.VarChar(1000)
+  repositoryUrl       String?              @db.VarChar(2048)
+  repositoryOwner     String?              @db.VarChar(100)
+  repositoryName      String?              @db.VarChar(100)
+  repositoryDefaultBranch String?           @db.VarChar(255)
+  repositoryStatus    String               @default("disconnected") @db.VarChar(24)
+  repositoryError     String?              @db.VarChar(300)
+  repositoryVerifiedAt DateTime?
+  userId              String               @db.Uuid
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  composeEnvironments ComposeEnvironment[]
+  activities           Activity[]
+  doctorScans          StackDoctorScan[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+}
+
+enum ComposeValidationStatus {
+  NOT_VALIDATED
+  VALID
+  INVALID
+}
+
+enum ComposeDeploymentStatus {
+  NOT_DEPLOYED
+  DEPLOYING
+  RUNNING
+  FAILED
+  STOPPED
+  CLEANING
+  CLEANUP_FAILED
+  REMOVED
+}
+
+model ComposeEnvironment {
+  id                     String                  @id @default(uuid()) @db.Uuid
+  name                   String                  @db.VarChar(100)
+  composeYaml            String                  @db.Text
+  validationStatus       ComposeValidationStatus @default(NOT_VALIDATED)
+  deploymentStatus       ComposeDeploymentStatus @default(NOT_DEPLOYED)
+  deploymentProjectName  String?                 @unique @db.VarChar(63)
+  deploymentStartedAt    DateTime?
+  deploymentCompletedAt  DateTime?
+  lastDeploymentError    String?                 @db.VarChar(500)
+  deploymentContainerIds String[]                @default([])
+  deploymentNetworkIds   String[]                @default([])
+  deploymentRemovedContainerIds String[]          @default([])
+  deploymentRemovedNetworkIds   String[]          @default([])
+  projectId              String                  @db.Uuid
+  project                Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+
+  @@index([projectId, updatedAt])
+  @@index([deploymentStatus])
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  name         String    @db.VarChar(100)
+  email        String    @unique @db.VarChar(254)
+  googleSubject String?  @unique @db.VarChar(255)
+  passwordHash String    @db.VarChar(255)
+  projects     Project[]
+  activities   Activity[]
+  localAgents  LocalAgent[]
+  agentPairingChallenges LocalAgentPairingChallenge[]
+  brainSnapshots BrainSnapshot[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model LocalAgent {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @db.Uuid
+  name           String    @db.VarChar(100)
+  credentialHash String    @unique @db.Char(64)
+  createdAt      DateTime  @default(now())
+  lastSeenAt     DateTime?
+  revokedAt      DateTime?
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt, createdAt])
+}
+
+model LocalAgentPairingChallenge {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  codeHash  String    @unique @db.Char(64)
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  consumedAt DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
+enum ActivityStatus {
+  SUCCEEDED
+  FAILED
+}
+
+model Activity {
+  id           String         @id @default(uuid()) @db.Uuid
+  userId       String         @db.Uuid
+  projectId    String?        @db.Uuid
+  actionType   String         @db.VarChar(64)
+  resourceType String         @db.VarChar(32)
+  resourceId   String?        @db.VarChar(128)
+  resourceName String?        @db.VarChar(255)
+  status       ActivityStatus
+  summary      String         @db.VarChar(500)
+  createdAt    DateTime       @default(now())
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project      Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt, id])
+  @@index([projectId, createdAt])
+}
+
+model StackDoctorScan {
+  id        String   @id @default(uuid()) @db.Uuid
+  projectId String   @db.Uuid
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  report    Json
+  createdAt DateTime @default(now())
+
+  @@index([projectId, createdAt])
+}
+
+model BrainSnapshot {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  sampledAt   DateTime @default(now())
+  data        Json
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, sampledAt])
+}

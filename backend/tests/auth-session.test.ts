@@ -1,0 +1,274 @@
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import cookieParser from 'cookie-parser';
+import cors from 'cors';
+import express from 'express';
+import { test, type TestContext } from 'node:test';
+import { Prisma } from '@prisma/client';
+import { SESSION_COOKIE_NAME } from '../src/auth/auth.constants.js';
+import { createSessionToken } from '../src/auth/session-token.js';
+import { env } from '../src/config/env.js';
+import { corsOptions } from '../src/config/cors.js';
+import { authService } from '../src/services/auth.service.js';
+import { projectService } from '../src/services/project.service.js';
+import { authRouter } from '../src/routes/auth.routes.js';
+import { projectRouter } from '../src/routes/project.routes.js';
+import { originGuard } from '../src/middleware/origin-guard.js';
+import { errorHandler } from '../src/middleware/error-handler.js';
+import { AppError } from '../src/errors/app-error.js';
+
+const userId = '11111111-1111-4111-8111-111111111111';
+const user = { id: userId, name: 'Test User', email: 'test@example.invalid', createdAt: new Date(), updatedAt: new Date() };
+
+async function sessionTestServer(context: TestContext, trustProxyHops = 0) {
+  const app = express();
+  app.set('trust proxy', trustProxyHops);
+  app.use(cors(corsOptions));
+  app.use(originGuard);
+  app.use(express.json());
+  app.use(cookieParser());
+  app.use('/api/auth', authRouter);
+  app.use('/api/projects', projectRouter);
+  app.use(errorHandler);
+  const server = createServer(app);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  context.after(() => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  return `http://127.0.0.1:${address.port}`;
+}
+
+function mockServices(context: TestContext) {
+  const oldLogin = authService.login;
+  const oldRegister = authService.register;
+  const oldCurrentUser = authService.getCurrentUser;
+  const oldProjectCreate = projectService.create;
+  authService.login = async () => ({ user, token: createSessionToken(userId) });
+  authService.register = async () => ({ user, token: createSessionToken(userId) });
+  authService.getCurrentUser = async () => user;
+  projectService.create = async (ownerId, input) => ({
+    id: '22222222-2222-4222-8222-222222222222', ...input, description: input.description ?? null,
+    repositoryUrl: input.repositoryUrl ?? null, userId: ownerId, createdAt: new Date(), updatedAt: new Date(),
+  });
+  context.after(() => {
+    authService.login = oldLogin;
+    authService.register = oldRegister;
+    authService.getCurrentUser = oldCurrentUser;
+    projectService.create = oldProjectCreate;
+  });
+}
+
+function cookieFrom(response: Response): string {
+  const setCookie = response.headers.get('set-cookie');
+  assert.ok(setCookie, 'auth response should set an HTTP-only session cookie');
+  assert.match(setCookie, new RegExp(`${SESSION_COOKIE_NAME}=`));
+  assert.match(setCookie, /HttpOnly/i);
+  assert.match(setCookie, /SameSite=Lax/i);
+  assert.match(setCookie, /Path=\//i);
+  assert.match(setCookie, /Max-Age=604800/i);
+  assert.doesNotMatch(setCookie, /;\s*Domain=/i);
+  if (process.env.NODE_ENV === 'production') assert.match(setCookie, /;\s*Secure/i);
+  return `${SESSION_COOKIE_NAME}=${setCookie.match(new RegExp(`${SESSION_COOKIE_NAME}=([^;]+)`))?.[1]}`;
+}
+
+test('login session survives restoration and authorizes project registration; logout clears it', async (context) => {
+  mockServices(context);
+  const base = await sessionTestServer(context);
+  const origin = 'http://localhost:5173';
+  const login = await fetch(`${base}/api/auth/login`, {
+    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: user.email, password: 'correct-password' }),
+  });
+  assert.equal(login.status, 200);
+  const cookie = cookieFrom(login);
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const restored = await fetch(`${base}/api/auth/me`, { headers: { Origin: origin, Cookie: cookie } });
+    assert.equal(restored.status, 200, 'session must be recognized after initial login and browser restoration');
+    assert.equal((await restored.json() as { user: { id: string } }).user.id, userId);
+  }
+
+  const project = await fetch(`${base}/api/projects`, {
+    method: 'POST', headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Session project' }),
+  });
+  assert.equal(project.status, 201);
+  assert.equal((await project.json() as { userId: string }).userId, userId);
+
+  const logout = await fetch(`${base}/api/auth/logout`, { method: 'POST', headers: { Origin: origin, Cookie: cookie } });
+  assert.equal(logout.status, 204);
+  assert.match(logout.headers.get('set-cookie') ?? '', /Expires=Thu, 01 Jan 1970/i);
+  const afterLogout = await fetch(`${base}/api/auth/me`, { headers: { Origin: origin } });
+  assert.equal(afterLogout.status, 401);
+});
+
+test('database connection failures during login return a safe actionable 503', async (context) => {
+  const oldLogin = authService.login;
+  authService.login = async () => {
+    throw new Prisma.PrismaClientInitializationError(
+      'database connection detail that must not be returned',
+      Prisma.prismaVersion.client,
+      'P1001',
+    );
+  };
+  context.after(() => { authService.login = oldLogin; });
+
+  const base = await sessionTestServer(context);
+  const response = await fetch(`${base}/api/auth/login`, {
+    method: 'POST',
+    headers: { Origin: env.FRONTEND_ORIGIN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: user.email, password: 'test-password' }),
+  });
+
+  assert.equal(response.status, 503);
+  const body = await response.json() as { error: string; code: string };
+  assert.equal(body.code, 'DATABASE_UNAVAILABLE');
+  assert.match(body.error, /PostgreSQL is running/);
+  assert.doesNotMatch(JSON.stringify(body), /database connection detail/);
+});
+
+test('database schema failures return migration guidance instead of an internal server error', async (context) => {
+  const oldLogin = authService.login;
+  authService.login = async () => {
+    throw new Prisma.PrismaClientKnownRequestError('missing table detail', {
+      code: 'P2021', clientVersion: Prisma.prismaVersion.client, meta: { modelName: 'User' },
+    });
+  };
+  context.after(() => { authService.login = oldLogin; });
+
+  const base = await sessionTestServer(context);
+  const response = await fetch(`${base}/api/auth/login`, {
+    method: 'POST',
+    headers: { Origin: env.FRONTEND_ORIGIN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: user.email, password: 'test-password' }),
+  });
+
+  assert.equal(response.status, 503);
+  const body = await response.json() as { error: string; code: string };
+  assert.equal(body.code, 'DATABASE_SCHEMA_OUTDATED');
+  assert.match(body.error, /Apply the project migrations/);
+  assert.doesNotMatch(JSON.stringify(body), /missing table detail|User/);
+});
+
+test('database failures do not consume the failed-login attempt budget', async (context) => {
+  const oldLogin = authService.login;
+  authService.login = async () => {
+    throw new Prisma.PrismaClientInitializationError('unavailable', Prisma.prismaVersion.client, 'P1001');
+  };
+  context.after(() => { authService.login = oldLogin; });
+  const base = await sessionTestServer(context, 1);
+  const input = {
+    method: 'POST',
+    headers: { Origin: env.FRONTEND_ORIGIN, 'Content-Type': 'application/json', 'X-Forwarded-For': '198.51.100.90' },
+    body: JSON.stringify({ email: user.email, password: 'test-password' }),
+  };
+  for (let attempt = 0; attempt < 11; attempt += 1) {
+    const response = await fetch(`${base}/api/auth/login`, input);
+    assert.equal(response.status, 503);
+  }
+
+  authService.login = async () => ({ user, token: createSessionToken(userId) });
+  const recovered = await fetch(`${base}/api/auth/login`, input);
+  assert.equal(recovered.status, 200);
+});
+
+test('registration creates a session and unauthenticated project creation returns 401', async (context) => {
+  mockServices(context);
+  const base = await sessionTestServer(context);
+  const unauthed = await fetch(`${base}/api/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'No session' }),
+  });
+  assert.equal(unauthed.status, 401);
+
+  const registration = await fetch(`${base}/api/auth/register`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: user.name, email: user.email, password: 'correct-password-123' }),
+  });
+  assert.equal(registration.status, 201);
+  assert.ok(cookieFrom(registration));
+});
+
+test('CORS allows the local origin, rejects other origins, and answers OPTIONS preflight', async (context) => {
+  const base = await sessionTestServer(context);
+  const good = await fetch(`${base}/api/auth/login`, {
+    method: 'OPTIONS', headers: {
+      Origin: 'http://localhost:5173',
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type',
+    },
+  });
+  assert.equal(good.status, 204);
+  assert.equal(good.headers.get('access-control-allow-origin'), 'http://localhost:5173');
+  assert.equal(good.headers.get('access-control-allow-credentials'), 'true');
+  assert.match(good.headers.get('access-control-allow-methods') ?? '', /POST/);
+  assert.match(good.headers.get('access-control-allow-headers') ?? '', /content-type/i);
+
+  const bad = await fetch(`${base}/api/auth/login`, {
+    method: 'OPTIONS', headers: {
+      Origin: 'https://unapproved.example',
+      'Access-Control-Request-Method': 'POST',
+    },
+  });
+  assert.equal(bad.status, 403);
+  assert.equal(bad.headers.get('access-control-allow-origin'), null);
+});
+
+test('successful logins and preflights do not consume the failed-login budget; proxy clients stay distinct', async (context) => {
+  mockServices(context);
+  const base = await sessionTestServer(context, 2);
+  const origin = 'http://localhost:5173';
+  const headers = (clientIp: string) => ({
+    Origin: origin,
+    'X-Forwarded-For': `${clientIp}, 203.0.113.20`,
+    'Content-Type': 'application/json',
+  });
+
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    const response = await fetch(`${base}/api/auth/login`, {
+      method: 'OPTIONS', headers: {
+        Origin: origin,
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type',
+      },
+    });
+    assert.equal(response.status, 204);
+  }
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const response = await fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: headers('198.51.100.10'),
+      body: JSON.stringify({ email: user.email, password: 'correct-password' }),
+    });
+    assert.equal(response.status, 200);
+  }
+
+  authService.login = async () => {
+    throw new AppError('Email or password is incorrect.', 401, 'INVALID_CREDENTIALS');
+  };
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const response = await fetch(`${base}/api/auth/login`, {
+      method: 'POST', headers: headers('198.51.100.10'),
+      body: JSON.stringify({ email: user.email, password: 'wrong-password' }),
+    });
+    assert.equal(response.status, 401);
+  }
+
+  const secondClient = await fetch(`${base}/api/auth/login`, {
+    method: 'POST', headers: headers('198.51.100.11'),
+    body: JSON.stringify({ email: user.email, password: 'wrong-password' }),
+  });
+  assert.equal(secondClient.status, 401, 'a different forwarded client IP must have an independent budget');
+
+  const blocked = await fetch(`${base}/api/auth/login`, {
+    method: 'POST', headers: headers('198.51.100.10'),
+    body: JSON.stringify({ email: user.email, password: 'wrong-password' }),
+  });
+  assert.equal(blocked.status, 429);
+  assert.equal((await blocked.json() as { code: string }).code, 'RATE_LIMITED');
+  assert.ok(Number(blocked.headers.get('retry-after')) > 0);
+
+  const me = await fetch(`${base}/api/auth/me`, { headers: { Origin: origin } });
+  assert.equal(me.status, 401, 'the login limiter must not be a global API limiter');
+});
