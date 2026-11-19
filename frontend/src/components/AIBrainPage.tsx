@@ -113,7 +113,7 @@ export function AIBrainPage() {
       <div className="brain-messages" aria-live="polite">{messages.length ? messages.map((message, index) => <div className={'brain-message ' + message.role} key={index + message.role}><b>{message.role === 'user' ? 'You' : 'AI Brain'}</b>{message.role === 'assistant' ? <AssistantReply content={message.content} /> : <p>{message.content}</p>}</div>) : <p className="brain-empty">Try “Which container has the most memory use?” or “Why is this container unhealthy?” Answers use a fresh, redacted Docker snapshot.</p>}{sending && <p className="brain-empty" role="status">AI Brain is reviewing the current Docker data…</p>}</div>
       {chatError && <div className="form-message error-message" role="alert">{chatError}</div>}
       <form onSubmit={(event) => void submit(event)} className="brain-chat-form"><input value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={2000} placeholder="Ask a question about your containers…" aria-label="Question for AI Brain"/><button className="primary-button" disabled={sending || !question.trim()}>{sending ? 'Thinking…' : 'Ask AI Brain'}</button></form>
-      <small>Chat uses the Gemini key in backend/.env. Your Docker data is sent to Gemini to answer; the assistant never runs commands.</small>
+      <small>Chat uses the AI provider configured in backend/.env. Your Docker data is sent to that provider to answer; the assistant never runs commands.</small>
     </section>
   </main>;
 }

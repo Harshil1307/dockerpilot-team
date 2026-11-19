@@ -1,6 +1,6 @@
 import { env } from '../config/env.js';
 import { AppError } from '../errors/app-error.js';
-import { aiProviderConfiguration, requestAiText, type AiMessage } from './ai-provider.service.js';
+import { AiProviderHttpError, aiProviderConfiguration, requestAiText, type AiMessage } from './ai-provider.service.js';
 import { DockerUnavailableError } from '../errors/docker-unavailable-error.js';
 import { prisma } from '../config/prisma.js';
 import { dockerService } from './docker.service.js';
@@ -162,7 +162,21 @@ export const aiBrainService = {
     try { result = await requestAiText(messages, { temperature: .2, timeoutMs: 30_000 }); }
     catch (error) {
       if (error instanceof Error && error.message === 'AI_EMPTY_RESPONSE') throw new AppError('The AI provider returned no answer.', 502, 'AI_EMPTY_RESPONSE');
-      if (error instanceof Error && error.message === 'AI_PROVIDER_ERROR') throw new AppError('The AI provider returned an error. Check the configured model and API key.', 502, 'AI_PROVIDER_ERROR');
+      if (error instanceof AiProviderHttpError) {
+        const status = error.status;
+        const provider = aiProviderConfiguration()?.provider ?? 'AI';
+        const providerName = provider === 'gemini' ? 'Gemini' : 'OpenAI';
+        const guidance: Record<number, string> = {
+          400: `${providerName} rejected the request. The model or request settings may be unsupported.`,
+          401: `${providerName} rejected the API key. Check the configured provider key in backend/.env.`,
+          403: `${providerName} denied access. Check that the key is active and the API is enabled for its project.`,
+          404: `${providerName} could not find that model. Check the configured model in backend/.env.`,
+          429: `${providerName} quota or rate limit reached. Check your provider usage and limits.`,
+        };
+        const message = guidance[status] ?? (status >= 500 ? `${providerName} is temporarily unavailable. Try again shortly.` : `${providerName} rejected the request. Check the API key and model settings in backend/.env.`);
+        const detail = error.detail ? ` Provider details: ${error.detail}` : '';
+        throw new AppError(`${message} (HTTP ${status}).${detail}`, 502, 'AI_PROVIDER_ERROR');
+      }
       throw new AppError('The AI provider could not be reached. Check backend network access and provider configuration.', 502, 'AI_PROVIDER_UNAVAILABLE');
     }
     return { answer: clean(result.text).slice(0, 8000), sampledAt: dashboard.sampledAt, provider: `${result.provider} · ${result.model}` };
