@@ -12,6 +12,7 @@ model Project {
   name                String               @db.VarChar(100)
   description         String?              @db.VarChar(1000)
   repositoryUrl       String?              @db.VarChar(2048)
+  dockerHubUrl        String?              @db.VarChar(2048)
   repositoryOwner     String?              @db.VarChar(100)
   repositoryName      String?              @db.VarChar(100)
   repositoryDefaultBranch String?           @db.VarChar(255)

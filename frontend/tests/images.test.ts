@@ -38,3 +38,4 @@ test('image size formatting handles typical values and invalid data', () => {
   assert.equal(formatImageSize(-1), 'Unavailable');
   assert.equal(formatImageSize(Number.NaN), 'Unavailable');
 });
+

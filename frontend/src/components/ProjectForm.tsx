@@ -10,7 +10,7 @@ interface ProjectFormProps {
   error: string | null;
 }
 
-const emptyValues: ProjectInput = { name: '', description: null, repositoryUrl: null };
+const emptyValues: ProjectInput = { name: '', description: null, repositoryUrl: null, dockerHubUrl: null };
 
 export function ProjectForm({
   initialValues = emptyValues,
@@ -23,6 +23,7 @@ export function ProjectForm({
   const [name, setName] = useState(initialValues.name);
   const [description, setDescription] = useState(initialValues.description ?? '');
   const [repositoryUrl, setRepositoryUrl] = useState(initialValues.repositoryUrl ?? '');
+  const [dockerHubUrl, setDockerHubUrl] = useState(initialValues.dockerHubUrl ?? '');
   const [validationError, setValidationError] = useState<string | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -30,6 +31,7 @@ export function ProjectForm({
     const trimmedName = name.trim();
     const trimmedDescription = description.trim();
     const trimmedUrl = repositoryUrl.trim();
+    const trimmedDockerHubUrl = dockerHubUrl.trim();
 
     if (!trimmedName) {
       setValidationError('Enter a project name.');
@@ -54,6 +56,13 @@ export function ProjectForm({
         if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'github.com' || path.length !== 2 || url.username || url.password || url.search || url.hash) throw new Error('invalid');
       } catch { setValidationError('Enter a GitHub repository URL in the form https://github.com/owner/repository.'); return; }
     }
+    if (trimmedDockerHubUrl) {
+      try {
+        const url = new URL(trimmedDockerHubUrl);
+        const path = url.pathname.replace(/\/$/, '').split('/').filter(Boolean);
+        if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'hub.docker.com' || path.length < 3 || path[0] !== 'r' || url.username || url.password || url.search || url.hash) throw new Error('invalid');
+      } catch { setValidationError('Enter a Docker Hub repository URL in the form https://hub.docker.com/r/namespace/repository.'); return; }
+    }
     try {
       new URL(trimmedUrl);
     } catch {
@@ -68,6 +77,7 @@ export function ProjectForm({
       name: trimmedName,
       description: trimmedDescription || null,
       repositoryUrl: trimmedUrl || null,
+      dockerHubUrl: trimmedDockerHubUrl || null,
     });
   }
 
@@ -82,6 +92,11 @@ export function ProjectForm({
         <span>GitHub repository URL <span className="optional-label">OPTIONAL</span></span>
         <input type="url" value={repositoryUrl} onChange={(event) => setRepositoryUrl(event.target.value)} placeholder="https://github.com/owner/repository" />
         <small>Connect a public GitHub repository. Stack Doctor reads its default branch and recent commits automatically.</small>
+      </label>
+      <label className="form-field">
+        <span>Docker Hub repository URL <span className="optional-label">OPTIONAL</span></span>
+        <input type="url" value={dockerHubUrl} onChange={(event) => setDockerHubUrl(event.target.value)} placeholder="https://hub.docker.com/r/traefik/whoami" />
+        <small>Connect a public image repository to browse tags, pull an image, and start a Compose environment from it.</small>
       </label>
       <label className="form-field">
         <span>Description <span className="optional-label">OPTIONAL</span></span>

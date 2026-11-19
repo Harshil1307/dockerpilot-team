@@ -117,3 +117,4 @@ test('image pull errors are visible and the inventory layout fits a mobile viewp
   const overflows = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   expect(overflows).toBe(false);
 });
+
