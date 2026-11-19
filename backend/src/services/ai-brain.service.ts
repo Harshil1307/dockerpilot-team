@@ -17,7 +17,7 @@ const clean = (value: string) => value
 const finite = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 
 export interface BrainContainer {
-  id: string; name: string; image: string; state: string; status: string; createdAt: string;
+  id: string; name: string; serviceName: string | null; image: string; state: string; status: string; createdAt: string;
   health: string | null; restartCount: number | null; startedAt: string | null; exitCode: number | null;
   privileged: boolean; readOnlyRootfs: boolean; writableBindMounts: string[];
   cpuPercent: number | null; memoryUsageBytes: number | null; memoryLimitBytes: number | null;
@@ -46,7 +46,7 @@ export const aiBrainService = {
       const networks = stats?.networks ? Object.values(stats.networks) : [];
       const blkio = stats?.blkio_stats?.io_service_bytes_recursive ?? [];
       return {
-        id: item.id, name: item.name, image: item.image, state: item.state, status: item.status, createdAt: item.createdAt,
+        id: item.id, name: item.name, serviceName: details?.serviceName ?? null, image: item.image, state: item.state, status: item.status, createdAt: item.createdAt,
         health: details?.health ?? null, restartCount: details?.restartCount ?? null, startedAt: details?.startedAt ?? null, exitCode: details?.exitCode ?? null,
         privileged: details?.privileged ?? false, readOnlyRootfs: details?.readOnlyRootfs ?? false, writableBindMounts: details?.writableBindMounts ?? [],
         cpuPercent: metrics.cpuPercent, memoryUsageBytes: metrics.memoryUsageBytes, memoryLimitBytes: metrics.memoryLimitBytes,
