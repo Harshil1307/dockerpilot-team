@@ -15,6 +15,7 @@ import { AIBrainPage } from './components/AIBrainPage';
 import { SmartAutoSleepPage } from './components/SmartAutoSleepPage';
 import { GitDetectivePage } from './components/GitDetectivePage';
 import { ProjectForm } from './components/ProjectForm';
+import { DockerHubImportPanel } from './components/DockerHubImportPanel';
 import { LandingPage } from './components/LandingPage';
 import { ProtectedRoute, PublicOnlyRoute } from './components/ProtectedRoute';
 import { StatusBadge } from './components/StatusBadge';
@@ -237,6 +238,7 @@ function ProjectDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [dockerHubImage, setDockerHubImage] = useState<{ reference: string; exposedPorts: string[] } | null>(null);
   const [notice, setNotice] = useState((location.state as { notice?: string } | null)?.notice ?? null);
 
   useEffect(() => {
@@ -297,15 +299,17 @@ function ProjectDetailPage() {
             {notice && <div className="form-message success-message" role="status">{notice}</div>}
             {error && !editing && <div className="form-message error-message" role="alert">{error}</div>}
             {editing ? (
-              <section className="form-panel"><ProjectForm key={project.updatedAt} initialValues={{ name: project.name, description: project.description, repositoryUrl: project.repositoryUrl }} submitLabel="Save changes" onSubmit={handleUpdate} onCancel={() => { setEditing(false); setError(null); }} saving={saving} error={error} /></section>
+              <section className="form-panel"><ProjectForm key={project.updatedAt} initialValues={{ name: project.name, description: project.description, repositoryUrl: project.repositoryUrl, dockerHubUrl: project.dockerHubUrl ?? null }} submitLabel="Save changes" onSubmit={handleUpdate} onCancel={() => { setEditing(false); setError(null); }} saving={saving} error={error} /></section>
             ) : (
               <section className="detail-panel">
                 <div className="detail-field"><span className="card-label">DESCRIPTION</span><p>{project.description || 'No description provided.'}</p></div>
                 <div className="detail-field"><span className="card-label">GITHUB REPOSITORY</span>{project.repositoryUrl ? <><a href={project.repositoryUrl} target="_blank" rel="noreferrer">{project.repositoryUrl} <span aria-hidden="true">↗</span></a><p className={`repository-connection repository-${project.repositoryStatus}`}>{project.repositoryStatus === 'connected' ? `Connected · ${project.repositoryName} · ${project.repositoryDefaultBranch ?? 'default branch unavailable'}` : project.repositoryStatus === 'error' ? `Connection issue · ${project.repositoryError ?? 'Retry repository connection in edit project.'}` : 'Connection pending'}</p><button className="secondary-button repository-disconnect" onClick={() => void handleDisconnectRepository()} disabled={saving}>Disconnect GitHub</button></> : <p>No GitHub repository connected.</p>}</div>
+                <div className="detail-field"><span className="card-label">DOCKER HUB IMAGE SOURCE</span>{project.dockerHubUrl ? <><a href={project.dockerHubUrl} target="_blank" rel="noreferrer">{project.dockerHubUrl} <span aria-hidden="true">↗</span></a><p>Public image repository connected. Edit project to change or disconnect it.</p></> : <p>No Docker Hub repository connected. Add a public image repository in Edit project.</p>}</div>
                 <div className="detail-timestamps"><span>CREATED {new Date(project.createdAt).toLocaleString()}</span><span>UPDATED {new Date(project.updatedAt).toLocaleString()}</span></div>
               </section>
             )}
-            <ComposeEnvironments projectId={project.id} projectName={project.name} />
+            <DockerHubImportPanel projectId={project.id} repositoryUrl={project.dockerHubUrl ?? null} onUseImage={setDockerHubImage} />
+            <ComposeEnvironments projectId={project.id} projectName={project.name} dockerHubImage={dockerHubImage} />
             <StackDoctorPanel projectId={project.id} />
           </>
         )}

@@ -2,17 +2,20 @@ import { prisma } from '../config/prisma.js';
 import { AppError } from '../errors/app-error.js';
 import { composeDeploymentOwnershipService } from './compose-ownership.service.js';
 import { githubRepositoryService } from './github-repository.service.js';
+import { parseDockerHubUrl } from './docker-hub.service.js';
 
 export interface CreateProjectInput {
   name: string;
   description?: string | null;
   repositoryUrl?: string | null;
+  dockerHubUrl?: string | null;
 }
 
 export interface UpdateProjectInput {
   name?: string;
   description?: string | null;
   repositoryUrl?: string | null;
+  dockerHubUrl?: string | null;
 }
 
 async function connectionFields(url: string) {
@@ -41,13 +44,15 @@ export const projectService = {
 
   async create(userId: string, input: CreateProjectInput) {
     const connection = input.repositoryUrl ? await connectionFields(input.repositoryUrl) : {};
-    return prisma.project.create({ data: { ...input, ...connection, userId } });
+    const dockerHubUrl = input.dockerHubUrl ? parseDockerHubUrl(input.dockerHubUrl).url : null;
+    return prisma.project.create({ data: { ...input, dockerHubUrl, ...connection, userId } });
   },
 
   async update(id: string, userId: string, input: UpdateProjectInput) {
     const existing = await prisma.project.findFirst({ where: { id, userId } });
     if (!existing) throw new AppError('Project not found.', 404, 'PROJECT_NOT_FOUND');
     const updateData: Record<string, unknown> = { ...input };
+    if (Object.hasOwn(input, 'dockerHubUrl')) updateData.dockerHubUrl = input.dockerHubUrl ? parseDockerHubUrl(input.dockerHubUrl).url : null;
     if (Object.hasOwn(input, 'repositoryUrl')) {
       if (!input.repositoryUrl) {
         updateData.repositoryOwner = null; updateData.repositoryName = null; updateData.repositoryDefaultBranch = null;

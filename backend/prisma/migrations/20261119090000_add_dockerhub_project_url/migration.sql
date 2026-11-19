@@ -1,0 +1,2 @@
+ALTER TABLE "Project"
+  ADD COLUMN "dockerHubUrl" VARCHAR(2048);

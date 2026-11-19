@@ -46,7 +46,7 @@ async function loadEnvironmentsWithDeploymentStatus(projectId: string): Promise<
   }));
 }
 
-export function ComposeEnvironments({ projectId, projectName }: { projectId: string; projectName: string }) {
+export function ComposeEnvironments({ projectId, projectName, dockerHubImage }: { projectId: string; projectName: string; dockerHubImage?: { reference: string; exposedPorts: string[] } | null }) {
   const confirm = useConfirm();
   const [environments, setEnvironments] = useState<ComposeEnvironmentSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -152,6 +152,21 @@ export function ComposeEnvironments({ projectId, projectName }: { projectId: str
     ).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [projectId]);
+
+  useEffect(() => {
+    if (!dockerHubImage) return;
+    setEnvironmentId(null);
+    setName(`${projectName} image`.slice(0, 100));
+    const ports = dockerHubImage.exposedPorts.length
+      ? `\n    ports:\n${dockerHubImage.exposedPorts.map((port) => `      - "127.0.0.1::${port}"`).join('\n')}`
+      : '';
+    setComposeYaml(`services:\n  app:\n    image: ${dockerHubImage.reference}\n    restart: unless-stopped${ports}\n`);
+    setValidation(null);
+    setNotice('Docker Hub image added to a new Compose draft. Review it, then validate and save before deploying.');
+    setFormError(null);
+    setFormOpen(true);
+    window.requestAnimationFrame(() => document.getElementById('compose-heading')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  }, [dockerHubImage, projectName]);
 
   async function startNew() {
     setEnvironmentId(null);
@@ -319,7 +334,7 @@ export function ComposeEnvironments({ projectId, projectName }: { projectId: str
           <input id="compose-environment-name" className="compose-name-input" value={name} onChange={(event) => { setName(event.target.value); setValidation(null); }} maxLength={100} placeholder="Local development" disabled={busy !== null} />
           <label className="compose-field-label" htmlFor="compose-yaml-editor">Compose YAML <span>64 KB maximum</span></label>
           <textarea id="compose-yaml-editor" className="compose-yaml-editor" value={composeYaml} onChange={(event) => { setComposeYaml(event.target.value); setValidation(null); }} spellCheck={false} autoCapitalize="off" autoCorrect="off" aria-describedby="compose-editor-help" disabled={busy !== null} />
-          <p id="compose-editor-help" className="compose-editor-help">{loadingTemplate ? 'Looking for a Compose file on the project’s default GitHub branch…' : 'DockerPilot uses a compatible Compose file from the connected public GitHub repository when available. If it cannot use that file, the editor loads a small Whoami demo that displays request details. Host ports are assigned automatically on deploy.'}</p>
+          <p id="compose-editor-help" className="compose-editor-help">{loadingTemplate ? 'Looking for a Compose file on the project’s default GitHub branch…' : dockerHubImage ? 'This draft uses the Docker Hub image you just pulled. Detected TCP ports are mapped to an automatic localhost port; review the YAML, validate, and save before deploying.' : 'DockerPilot uses a compatible Compose file from the connected public GitHub repository when available. If it cannot use that file, the editor loads a small Whoami demo that displays request details. Host ports are assigned automatically on deploy.'}</p>
           {formError && <div className="form-message error-message" role="alert">{formError}</div>}
           {validation && (
             <div className={`compose-validation-result ${validation.valid ? 'validation-valid' : 'validation-invalid'}`} role={validation.valid ? 'status' : 'alert'}>

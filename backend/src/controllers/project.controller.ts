@@ -2,6 +2,7 @@ import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import { AppError } from '../errors/app-error.js';
 import { projectService } from '../services/project.service.js';
+import { dockerHubService } from '../services/docker-hub.service.js';
 
 const repositoryUrlField = z
   .union([
@@ -9,6 +10,18 @@ const repositoryUrlField = z
       const protocol = new URL(value).protocol;
       return protocol === 'http:' || protocol === 'https:';
     }, 'Repository URL must use http or https.'),
+    z.literal(''),
+    z.null(),
+  ])
+  .optional()
+  .transform((value) => (value === '' ? null : value));
+
+const dockerHubUrlField = z
+  .union([
+    z.string().trim().max(2048).url().refine((value) => {
+      const url = new URL(value);
+      return url.protocol === 'https:' && url.hostname.toLowerCase() === 'hub.docker.com';
+    }, 'Docker Hub repository URLs must use https://hub.docker.com.'),
     z.literal(''),
     z.null(),
   ])
@@ -24,12 +37,14 @@ const createProjectSchema = z.object({
   name: z.string().trim().min(1, 'Project name is required.').max(100, 'Project name must be 100 characters or fewer.'),
   description: descriptionField,
   repositoryUrl: repositoryUrlField,
+  dockerHubUrl: dockerHubUrlField,
 }).strict();
 
 const updateProjectSchema = z.object({
   name: z.string().trim().min(1, 'Project name is required.').max(100, 'Project name must be 100 characters or fewer.').optional(),
   description: descriptionField,
   repositoryUrl: repositoryUrlField,
+  dockerHubUrl: dockerHubUrlField,
 }).strict().refine((input) => Object.keys(input).length > 0, {
   message: 'Provide at least one project field to update.',
 });
@@ -50,6 +65,12 @@ export const listProjects: RequestHandler = async (request, response) => {
 
 export const getProject: RequestHandler = async (request, response) => {
   response.status(200).json(await projectService.get(parseProjectId(request.params.id), requireUserId(request.userId)));
+};
+
+export const getProjectDockerHubRepository: RequestHandler = async (request, response) => {
+  const project = await projectService.get(parseProjectId(request.params.id), requireUserId(request.userId));
+  if (!project.dockerHubUrl) throw new AppError('Connect a Docker Hub repository in project settings first.', 404, 'DOCKER_HUB_NOT_CONNECTED');
+  response.status(200).json(await dockerHubService.inspect(project.dockerHubUrl));
 };
 
 export const createProject: RequestHandler = async (request, response) => {

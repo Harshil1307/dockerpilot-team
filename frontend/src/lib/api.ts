@@ -39,6 +39,7 @@ export interface Project {
   name: string;
   description: string | null;
   repositoryUrl: string | null;
+  dockerHubUrl?: string | null;
   repositoryOwner: string | null;
   repositoryName: string | null;
   repositoryDefaultBranch: string | null;
@@ -53,6 +54,18 @@ export interface ProjectInput {
   name: string;
   description: string | null;
   repositoryUrl: string | null;
+  dockerHubUrl?: string | null;
+}
+
+export interface DockerHubRepository {
+  namespace: string;
+  repository: string;
+  url: string;
+  description: string;
+  pullCount: number;
+  starCount: number;
+  lastUpdated: string | null;
+  tags: { name: string }[];
 }
 
 export interface StackDoctorIssue { key: string; severity: 'CRITICAL' | 'WARNING' | 'INFORMATIONAL'; title: string; description: string; whyItMatters: string; recommendation: string; evidence: string; service: string | null }
@@ -555,6 +568,10 @@ export function listProjects(): Promise<Project[]> {
 
 export function getProject(id: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(id)}`);
+}
+
+export function getProjectDockerHubRepository(id: string): Promise<DockerHubRepository> {
+  return request<DockerHubRepository>(`/projects/${encodeURIComponent(id)}/docker-hub`);
 }
 
 export function createProject(input: ProjectInput): Promise<Project> {
